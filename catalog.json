@@ -1,0 +1,66 @@
+{
+  "source": "https://github.com/CommonPaper",
+  "license": "CC BY 4.0",
+  "templates": [
+    {
+      "name": "Mutual Non-Disclosure Agreement",
+      "description": "Standard Terms for a mutual NDA under which both parties may share and must protect each other's confidential information.",
+      "filename": "templates/Mutual-NDA.md"
+    },
+    {
+      "name": "Mutual Non-Disclosure Agreement Cover Page",
+      "description": "Cover Page for the Mutual NDA capturing deal-specific terms (parties, purpose, effective date, term, governing law) that incorporates the NDA Standard Terms.",
+      "filename": "templates/Mutual-NDA-coverpage.md"
+    },
+    {
+      "name": "Cloud Service Agreement",
+      "description": "Standard Terms for selling and buying cloud software / SaaS, covering access, restrictions, fees, confidentiality, warranties, liability and termination.",
+      "filename": "templates/CSA.md"
+    },
+    {
+      "name": "Service Level Agreement",
+      "description": "Uptime and support response-time commitments, with service credits, designed to attach to the Cloud Service Agreement.",
+      "filename": "templates/sla.md"
+    },
+    {
+      "name": "Data Processing Agreement",
+      "description": "Terms governing a provider's processing of customer personal data, including subprocessors, security, data transfers and GDPR/CCPA obligations.",
+      "filename": "templates/DPA.md"
+    },
+    {
+      "name": "Design Partner Agreement",
+      "description": "Agreement for early-stage design partnerships where a customer gets early product access in exchange for feedback.",
+      "filename": "templates/design-partner-agreement.md"
+    },
+    {
+      "name": "Professional Services Agreement",
+      "description": "Standard Terms for engaging a provider to perform professional services and deliverables under statements of work.",
+      "filename": "templates/psa.md"
+    },
+    {
+      "name": "Partnership Agreement",
+      "description": "Terms for business partnerships such as referral, reseller or co-marketing relationships, including obligations, fees and trademark use.",
+      "filename": "templates/Partnership-Agreement.md"
+    },
+    {
+      "name": "Business Associate Agreement",
+      "description": "HIPAA Business Associate Agreement governing a business associate's use and disclosure of protected health information.",
+      "filename": "templates/BAA.md"
+    },
+    {
+      "name": "Software License Agreement",
+      "description": "Standard Terms for licensing installed / on-premise software, covering license scope, restrictions, fees, warranties and liability.",
+      "filename": "templates/Software-License-Agreement.md"
+    },
+    {
+      "name": "Pilot Agreement",
+      "description": "Terms for a limited-time trial or pilot of a product before a customer commits to a full commercial agreement.",
+      "filename": "templates/Pilot-Agreement.md"
+    },
+    {
+      "name": "AI Addendum",
+      "description": "Addendum covering the use of AI services, including treatment of inputs and outputs and restrictions on training with customer data.",
+      "filename": "templates/AI-Addendum.md"
+    }
+  ]
+}
