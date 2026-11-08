@@ -17,7 +17,12 @@ npm run dev      # http://localhost:3000
 | `npm run dev`   | Start the development server             |
 | `npm run build` | Production build (page is fully static)  |
 | `npm test`      | Unit tests (Vitest), incl. PDF rendering |
+| `npm run test:e2e` | End-to-end tests (Playwright) against the production build |
 | `npm run lint`  | ESLint                                   |
+
+Before the first e2e run, install the browser once with `npx playwright install chromium`.
+The e2e suite (`e2e/`) builds and serves the app itself. It covers the live preview, term options,
+the years input, keyboard navigation of the radio groups, console errors and the PDF download.
 
 ## How it works
 
