@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: "Times New Roman", Times, Georgia, serif;
+}
+
+body {
+  background: var(--color-stone-100);
+  color: var(--color-stone-900);
+}

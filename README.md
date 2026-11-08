@@ -8,7 +8,8 @@
 
 ## Getting Started
 
-Setup and installation instructions will be added once the initial code is in place.
+- **Mutual NDA Creator** (`frontend/`): a Next.js app that fills in the Common Paper Mutual NDA from a form and exports it as a PDF. See [frontend/README.md](frontend/README.md).
+- **Templates** (`templates/`, `catalog.json`): Common Paper legal templates dataset.
 
 ## Contributing
 
