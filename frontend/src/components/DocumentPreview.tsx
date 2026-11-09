@@ -1,4 +1,4 @@
-import type { Block, Inline } from "@/lib/nda/types";
+import type { Block, Inline } from "@/lib/documents/types";
 
 function InlineRun({ inline }: { inline: Inline }) {
   switch (inline.kind) {
@@ -46,8 +46,8 @@ function BlockView({ block }: { block: Block }) {
       );
     case "clause":
       return (
-        <p className="mt-3 text-justify">
-          {block.number}. <Inlines inlines={block.inlines} />
+        <p className={`text-justify ${block.level === 0 ? "mt-4" : "mt-2"}`} style={{ marginLeft: `${block.level * 1.5}rem` }}>
+          {block.label} <Inlines inlines={block.inlines} />
         </p>
       );
     case "signatures":
@@ -56,8 +56,11 @@ function BlockView({ block }: { block: Block }) {
           <thead>
             <tr>
               <th className="w-1/4 border border-stone-300 p-2" />
-              <th className="border border-stone-300 p-2">PARTY 1</th>
-              <th className="border border-stone-300 p-2">PARTY 2</th>
+              {block.parties.map((party) => (
+                <th key={party} className="border border-stone-300 p-2 uppercase">
+                  {party}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -82,7 +85,7 @@ function BlockView({ block }: { block: Block }) {
   }
 }
 
-/** HTML rendering of the NDA document model, styled as a sheet of paper. */
+/** HTML rendering of the document model, styled as a sheet of paper. */
 export function DocumentPreview({ blocks }: { blocks: Block[] }) {
   return (
     <article className="mx-auto max-w-[8.5in] bg-white px-8 py-10 font-serif text-[15px] leading-relaxed text-stone-900 shadow-lg ring-1 ring-stone-200 sm:px-14">

@@ -2,15 +2,8 @@
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 
-import { api, ApiError, type ChatMessage } from "@/lib/api";
-import type { NdaFormData, NdaUpdates } from "@/lib/nda/types";
+import type { ChatMessage } from "@/lib/api";
 
-/** Shown before the user types; sent with the history so the AI knows what it asked. */
-export const GREETING =
-  "Hi! I'll help you put together a Mutual Non-Disclosure Agreement and fill it in as we talk. " +
-  "To start: who are the two parties, and what will you be sharing confidential information for?";
-
-const FALLBACK_ERROR = "Couldn’t reach the assistant. Please try again.";
 const MAX_MESSAGE_LENGTH = 4000;
 
 function MessageBubble({ message }: { message: ChatMessage }) {
@@ -29,23 +22,21 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-interface NdaChatProps {
-  data: NdaFormData;
-  /** The user's local date; "" until hydrated, which keeps the input disabled. */
-  today: string;
-  onUpdate: (updates: NdaUpdates) => void;
+interface DocumentChatProps {
+  messages: ChatMessage[];
+  sending: boolean;
+  error: string | null;
+  /** False until hydrated; keeps the input disabled. */
+  ready: boolean;
+  /** Resolves false if the message failed, in which case it is put back in the input. */
+  onSend: (text: string) => Promise<boolean>;
 }
 
-/** Free-form chat with the AI assistant, which fills in the NDA as the user answers. */
-export function NdaChat({ data, today, onUpdate }: NdaChatProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: GREETING }]);
+/** The chat panel: conversation log and message input. State lives in useDocumentChat. */
+export function DocumentChat({ messages, sending, error, ready, onSend }: DocumentChatProps) {
   const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-
-  const ready = today !== "";
   const canSend = ready && !sending && draft.trim() !== "";
 
   // Keep the newest message in view.
@@ -54,28 +45,12 @@ export function NdaChat({ data, today, onUpdate }: NdaChatProps) {
   }, [messages, sending]);
 
   async function send() {
-    const content = draft.trim();
     if (!canSend) return;
-
-    const history: ChatMessage[] = [...messages, { role: "user", content }];
-    setMessages(history);
+    const text = draft;
     setDraft("");
-    setError(null);
-    setSending(true);
-    try {
-      const { reply, updates } = await api.chat({ messages: history, fields: data, today });
-      onUpdate(updates);
-      setMessages([...history, { role: "assistant", content: reply }]);
-    } catch (err) {
-      console.error("Chat request failed", err);
-      // Roll back so the user can retry the same message.
-      setMessages(messages);
-      setDraft(content);
-      setError(err instanceof ApiError && err.detail ? err.detail : FALLBACK_ERROR);
-    } finally {
-      setSending(false);
-      inputRef.current?.focus();
-    }
+    const sent = await onSend(text);
+    if (!sent) setDraft(text.trim());
+    inputRef.current?.focus();
   }
 
   function handleSubmit(e: FormEvent) {

@@ -1,37 +1,28 @@
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import REPO_ROOT, Settings
+from app.documents import load_library
+from app.drafting_chat import ChatRequest, describe_library
 from app.llm import OpenRouterClient
-from app.nda_chat import RESPOND_TOOL_SCHEMA
 from app.routes import get_llm
 from tests.conftest import make_client
 
+LIBRARY = load_library(Settings().document_types_path)
 PARTY = {"name": "", "title": "", "company": "", "noticeAddress": ""}
-FIELDS = {
-    "purpose": "Evaluating whether to enter into a business relationship with the other party.",
-    "effectiveDate": "",
-    "mndaTermType": "expires",
-    "mndaTermYears": 1,
-    "confidentialityType": "years",
-    "confidentialityYears": 1,
-    "governingLaw": "",
-    "jurisdiction": "",
-    "modifications": "",
-    "party1": PARTY,
-    "party2": PARTY,
-}
-GREETING = "Hi! Who are the two parties to this NDA?"
+GREETING = "Hi! What document do you need?"
 
 
-def chat_request(*user_messages: str) -> Dict[str, Any]:
+def chat_request(*user_messages: str, document_id: Optional[str] = None, fields: Optional[Dict[str, str]] = None):
     messages = [{"role": "assistant", "content": GREETING}]
     messages += [{"role": "user", "content": m} for m in user_messages]
-    return {"messages": messages, "fields": FIELDS, "today": "2026-11-09"}
+    draft = {"documentId": document_id, "fields": fields or {}, "party1": PARTY, "party2": PARTY}
+    return {"messages": messages, "draft": draft, "today": "2026-11-09"}
 
 
 def tool_call_response(arguments: Any, name: str = "respond") -> httpx.Response:
@@ -55,68 +46,138 @@ def chat_client(tmp_path: Path):
         requests.append(json.loads(request.content))
         return state["handler"](request)
 
-    llm = OpenRouterClient("test-key", "test/model", transport=httpx.MockTransport(transport))
+    llm = OpenRouterClient("test-key", ["test/model"], transport=httpx.MockTransport(transport))
     with make_client(tmp_path) as client:
         client.app.dependency_overrides[get_llm] = lambda: llm
         yield client, lambda handler: state.update(handler=handler), requests
     llm.close()
 
 
-def test_chat_returns_reply_and_only_the_updated_fields(chat_client):
-    client, set_handler, requests = chat_client
-    set_handler(
-        lambda _: tool_call_response(
-            {
-                "reply": "Great. Which state's law should govern?",
-                "updates": {"party1": {"company": "Acme, Inc."}, "party2": {"company": "Globex"}, "mndaTermYears": 2},
-            }
-        )
-    )
+def respond_with(chat_client, arguments: Any) -> TestClient:
+    client, set_handler, _ = chat_client
+    set_handler(lambda _: tool_call_response(arguments))
+    return client
 
-    response = client.post("/api/chat", json=chat_request("Acme and Globex, for 2 years"))
+
+def test_selecting_a_document_returns_its_fields_and_parties(chat_client):
+    turn = {
+        "reply": "A Cloud Service Agreement it is. Who signs for Globex?",
+        "documentId": "cloud-service-agreement",
+        "fields": {"subscriptionPeriod": "12 months", "effectiveDate": "2026-12-01"},
+        "party1": {"company": "Acme Inc"},
+        "party2": {"company": "Globex"},
+    }
+    client = respond_with(chat_client, turn)
+
+    response = client.post("/api/chat", json=chat_request("We sell SaaS to Globex"))
 
     assert response.status_code == 200
-    assert response.json() == {
-        "reply": "Great. Which state's law should govern?",
-        "updates": {"party1": {"company": "Acme, Inc."}, "party2": {"company": "Globex"}, "mndaTermYears": 2},
-    }
+    assert response.json() == turn
 
 
-def test_chat_sends_context_and_offers_the_respond_tool(chat_client):
+def test_answers_are_sanitised_against_the_document(chat_client):
+    client = respond_with(
+        chat_client,
+        {
+            "reply": "Noted **Delaware**.",
+            "documentId": "pilot-agreement",  # unchanged: dropped
+            "fields": {
+                "governingLaw": " Delaware ",
+                "pilotPeriod": 90,  # number: kept as text
+                "effectiveDate": "next week",  # not ISO: dropped
+                "mndaTerm": "1 year",  # another document's field: dropped
+                "chosenCourts": None,  # null: dropped
+            },
+        },
+    )
+
+    response = client.post("/api/chat", json=chat_request("Delaware, 90 days", document_id="pilot-agreement"))
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "Noted Delaware.", "fields": {"governingLaw": "Delaware", "pilotPeriod": "90"}}
+
+
+def test_unknown_document_ids_and_fields_without_a_document_are_dropped(chat_client):
+    client = respond_with(
+        chat_client,
+        {"reply": "We can't do leases.", "documentId": "lease", "fields": {"rent": "$2,000"}, "party1": {"name": "Ann"}},
+    )
+
+    response = client.post("/api/chat", json=chat_request("I need a lease"))
+
+    assert response.json() == {"reply": "We can't do leases.", "fields": {}, "party1": {"name": "Ann"}}
+
+
+def test_switching_documents_validates_fields_against_the_new_document(chat_client):
+    client = respond_with(
+        chat_client,
+        {
+            "reply": "Switching to a Pilot Agreement.",
+            "documentId": "pilot-agreement",
+            "fields": {"pilotPeriod": "60 days", "purpose": "Testing"},
+        },
+    )
+
+    response = client.post("/api/chat", json=chat_request("Make it a pilot instead", document_id="mutual-nda"))
+
+    assert response.json()["documentId"] == "pilot-agreement"
+    assert response.json()["fields"] == {"pilotPeriod": "60 days"}
+
+
+def test_chat_sends_catalogue_draft_and_tool(chat_client):
     client, set_handler, requests = chat_client
-    set_handler(lambda _: tool_call_response({"reply": "Noted.", "updates": {}}))
+    set_handler(lambda _: tool_call_response({"reply": "Noted."}))
 
-    client.post("/api/chat", json=chat_request("Acme and Globex"))
+    client.post("/api/chat", json=chat_request("Acme and Globex", document_id="mutual-nda", fields={"purpose": "Deal"}))
 
     (payload,) = requests
     assert payload["model"] == "test/model"
     assert payload["max_tokens"] > 0
-    assert payload["tools"][0]["function"]["name"] == "respond"
-    assert payload["tools"][0]["function"]["parameters"] == RESPOND_TOOL_SCHEMA
+    tool = payload["tools"][0]["function"]
+    assert tool["name"] == "respond"
+    assert tool["parameters"]["properties"]["documentId"]["enum"] == [d.id for d in LIBRARY.documents]
+    assert "anyOf" not in json.dumps(tool["parameters"]) and "$ref" not in json.dumps(tool["parameters"])
+
     system, *messages = payload["messages"]
-    assert system["role"] == "system"
+    assert describe_library(LIBRARY) in system["content"]
     assert "2026-11-09" in system["content"]
-    assert '"mndaTermType": "expires"' in system["content"]
-    # The canned greeting moves into the system prompt; the conversation starts with the user.
+    assert '"documentId": "mutual-nda"' in system["content"]
     assert GREETING in system["content"]
     assert messages == [{"role": "user", "content": "Acme and Globex"}]
 
 
-def test_tool_schema_is_self_contained():
-    assert "$defs" not in RESPOND_TOOL_SCHEMA
-    assert "$ref" not in json.dumps(RESPOND_TOOL_SCHEMA)
-    party1 = RESPOND_TOOL_SCHEMA["properties"]["updates"]["properties"]["party1"]
-    assert "noticeAddress" in json.dumps(party1)
+def test_several_models_are_sent_as_a_fallback_list(tmp_path: Path):
+    requests: List[Dict[str, Any]] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return tool_call_response({"reply": "Hi."})
+
+    llm = OpenRouterClient("k", ["a/free", "b/free"], transport=httpx.MockTransport(transport))
+    with make_client(tmp_path) as client:
+        client.app.dependency_overrides[get_llm] = lambda: llm
+        client.post("/api/chat", json=chat_request("hello"))
+    llm.close()
+
+    assert requests[0]["models"] == ["a/free", "b/free"]
+    assert "model" not in requests[0]
+
+
+def test_library_entries_match_the_templates():
+    catalog = {t["filename"] for t in json.loads((REPO_ROOT / "catalog.json").read_text())["templates"]}
+    for doc in LIBRARY.documents:
+        assert doc.standard_terms in catalog
+        assert (REPO_ROOT / doc.standard_terms).is_file()
 
 
 @pytest.mark.parametrize(
     "upstream",
     [
         httpx.Response(500, text="boom"),
+        httpx.Response(429, json={"error": {"message": "rate limited"}}),
         tool_call_response("not json"),
-        tool_call_response({"reply": "x", "updates": {}}, name="other_tool"),
-        tool_call_response({"reply": "x", "updates": {"mndaTermYears": 0}}),
-        tool_call_response({"reply": "x", "updates": {"effectiveDate": "next week"}}),
+        tool_call_response({"reply": ""}),
+        tool_call_response({"fields": {}}),
         httpx.Response(200, json={"choices": [{"message": {"content": ""}}]}),
         httpx.Response(200, json={"error": {"message": "provider error"}}),
     ],
@@ -131,31 +192,22 @@ def test_bad_upstream_answers_become_502(chat_client, upstream):
     assert "couldn't respond" in response.json()["detail"]
 
 
-def test_effective_date_can_be_reset_to_today(chat_client):
+def test_plain_text_answer_becomes_reply_without_changes(chat_client):
     client, set_handler, _ = chat_client
-    set_handler(lambda _: tool_call_response({"reply": "Today it is.", "updates": {"effectiveDate": ""}}))
-
-    response = client.post("/api/chat", json=chat_request("start today"))
-
-    assert response.status_code == 200
-    assert response.json()["updates"] == {"effectiveDate": ""}
-
-
-def test_plain_text_answer_becomes_reply_without_updates(chat_client):
-    client, set_handler, _ = chat_client
-    set_handler(lambda _: httpx.Response(200, json={"choices": [{"message": {"content": " Which state? "}}]}))
+    set_handler(lambda _: httpx.Response(200, json={"choices": [{"message": {"content": " Which document? "}}]}))
 
     response = client.post("/api/chat", json=chat_request("hello"))
 
     assert response.status_code == 200
-    assert response.json() == {"reply": "Which state?", "updates": {}}
+    assert response.json() == {"reply": "Which document?", "fields": {}}
 
 
-def test_request_must_end_with_a_user_message(chat_client):
+def test_request_validation(chat_client):
     client, _, requests = chat_client
-    body = chat_request()  # greeting only
 
-    assert client.post("/api/chat", json=body).status_code == 422
+    assert client.post("/api/chat", json=chat_request()).status_code == 422  # greeting only
+    too_long = chat_request("hi", fields={"purpose": "x" * 5001})
+    assert client.post("/api/chat", json=too_long).status_code == 422
     assert requests == []
 
 
@@ -165,3 +217,9 @@ def test_chat_without_api_key_is_503(tmp_path: Path):
 
     assert response.status_code == 503
     assert "OPENROUTER_API_KEY" in response.json()["detail"]
+
+
+def test_request_model_reads_camel_case():
+    request = ChatRequest.model_validate(chat_request("hi", document_id="mutual-nda"))
+    assert request.draft.document_id == "mutual-nda"
+    assert request.draft.model_dump(by_alias=True)["party1"] == PARTY

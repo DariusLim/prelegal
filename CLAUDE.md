@@ -10,12 +10,15 @@ and commit messages start with `PL-<n>: `. Changes land on `main` via PRs.
   Next.js version has breaking changes, and its docs are in `frontend/node_modules/next/dist/docs/`.
 - `backend/`: FastAPI + SQLAlchemy 2 on Python 3.9+. Use `typing.Optional`/`List` rather than `X | None`,
   because Pydantic evaluates annotations at runtime.
-- `templates/` + `catalog.json`: Common Paper templates dataset (CC BY 4.0), read by both apps.
+- `templates/` + `catalog.json`: Common Paper templates dataset (CC BY 4.0).
+- `document-types.json`: the 11 documents the assistant can create (fields, party roles, Standard Terms
+  template). Read by both apps; add or change documents here.
 - `scripts/`: `start.sh` / `stop.sh` for the whole stack.
 
 ## Commands
 
 ```bash
+cp .env.example .env                     # once; set OPENROUTER_API_KEY (needed for the AI chat)
 scripts/start.sh                         # install deps if needed, start backend :8000 + frontend :3000
 scripts/stop.sh                          # stop both (PIDs/logs in .run/)
 cd backend && .venv/bin/python -m pytest  # backend tests
@@ -33,24 +36,33 @@ Ports can be overridden with `BACKEND_PORT` / `FRONTEND_PORT`. `start.sh` refuse
 - Never commit secrets. `.env*` is git-ignored except `.env.example`. `.codex/` contains a token and is
   excluded locally.
 - The LLM is called only from the backend (`backend/app/llm.py`, OpenRouter, key `OPENROUTER_API_KEY` in
-  the root `.env`). Always set `max_tokens`. Claude via OpenRouter rejects a forced `tool_choice`, so use
-  `"auto"` and handle plain-text answers.
+  the root `.env`). Free models are the default (`OPENROUTER_MODEL` is a comma-separated fallback list).
+  Always set `max_tokens`. Use `tool_choice: "auto"`, because Claude via OpenRouter rejects a forced
+  tool. Handle plain-text answers, and sanitise model output against `document-types.json`.
 - Frontend e2e tests mock `/api/chat` with `page.route`. Never call the real LLM from tests.
 
 ## Implementation status (2026-11-09)
 
-- **PL-2**: Common Paper templates dataset and `catalog.json`.
-- **PL-3**: Mutual NDA Creator (`frontend/`). A form (replaced by the chat in PL-5) drove a live preview and PDF export via `@react-pdf`.
-  The Standard Terms are read from `templates/` at build time. Vitest and Playwright tests are included.
+Done: PL-2 to PL-6. To Do: PL-1 (company website), PL-7 (multiple users, final polish).
+
+- **PL-2** (PR #3): Common Paper templates dataset and `catalog.json`.
+- **PL-3** (PR #4): Mutual NDA Creator (`frontend/`). A live preview and PDF export via `@react-pdf`, driven
+  by a form (replaced by the chat in PL-5). The Standard Terms are read from `templates/` at build time.
 - **PL-4** (PR #5): v1 technical foundation, with no product changes.
   - FastAPI backend with a temporary SQLite DB at `backend/data/prelegal.db`. The DB is disposable: the
     tables are created and the `templates` table is re-synced from `catalog.json` on every startup.
   - Endpoints: `GET /api/health` and `GET /api/templates`.
   - Frontend `/api` proxy and a typed client in `frontend/src/lib/api.ts`.
   - `scripts/start.sh` / `scripts/stop.sh`.
-- **PL-5**: AI chat replaces the NDA form (still Mutual NDA only).
+- **PL-5** (PR #6): AI chat replaces the NDA form (still Mutual NDA only).
   - `POST /api/chat` with Claude Sonnet 5.5 via OpenRouter. Each turn returns `{reply, updates}`, and the
     updates are Pydantic-validated.
-  - Frontend `NdaChat` + `applyUpdates`. The conversation lives in page state only (not persisted).
+  - Frontend chat + update merging. The conversation lives in page state only (not persisted).
+- **PL-6**: all 11 Common Paper documents, with one generic engine driven by `document-types.json`.
+  - The AI picks or switches the document (switching keeps the parties). For unsupported requests it
+    suggests the closest document. Before a choice, a clickable picker lists the documents.
+  - Generic Cover Page + nested Standard Terms parser. The Mutual NDA's bespoke form model is gone.
+  - Free OpenRouter models by default (Nemotron 3.5 Super with fallbacks), at about 10–30s per turn.
 - **Not yet done**: no migrations (add Alembic before storing durable data), no auth, no CI, no streaming
-  chat responses, no chat persistence, only the Mutual NDA is supported (PL-6).
+  chat responses, no chat persistence. All Standard Terms are shipped in the page payload, which could
+  be lazy-loaded per document.

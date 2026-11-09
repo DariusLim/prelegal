@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api, ApiError } from "../api";
-import { createDefaultFormData } from "../nda/buildDocument";
+import { createDraft } from "../documents/buildDocument";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -24,11 +24,11 @@ describe("api client", () => {
   });
 
   it("POSTs chat turns as JSON", async () => {
-    const reply = { reply: "Which state?", updates: { governingLaw: "Delaware" } };
+    const reply = { reply: "Which state?", documentId: "mutual-nda", fields: { governingLaw: "Delaware" } };
     const fetchMock = stubFetch(Response.json(reply));
     const body = {
       messages: [{ role: "user" as const, content: "Delaware law" }],
-      fields: createDefaultFormData(),
+      draft: createDraft(null),
       today: "2026-11-09",
     };
 
@@ -42,7 +42,7 @@ describe("api client", () => {
   it("throws ApiError carrying the backend's detail message", async () => {
     stubFetch(Response.json({ detail: "The AI assistant isn't configured" }, { status: 503 }));
 
-    const error = await api.chat({ messages: [], fields: createDefaultFormData(), today: "" }).catch((e: unknown) => e);
+    const error = await api.chat({ messages: [], draft: createDraft(null), today: "" }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 503, detail: "The AI assistant isn't configured" });
   });

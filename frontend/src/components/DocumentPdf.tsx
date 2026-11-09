@@ -1,10 +1,10 @@
 import { Document, Link, Page, StyleSheet, Text, View } from "@react-pdf/renderer";
 
-import type { Block, Inline } from "@/lib/nda/types";
+import type { Block, Inline } from "@/lib/documents/types";
 
 /**
- * PDF rendering of the NDA document model. Loaded on demand (see
- * NdaBuilder) so @react-pdf/renderer stays out of the initial bundle.
+ * PDF rendering of the document model. Loaded on demand (see
+ * DocumentBuilder) so @react-pdf/renderer stays out of the initial bundle.
  */
 
 /**
@@ -71,8 +71,12 @@ function renderBlock(block: Block, key: number) {
       );
     case "clause":
       return (
-        <Text key={key} style={styles.clause} {...noHyphenation}>
-          {`${block.number}. `}
+        <Text
+          key={key}
+          style={[styles.clause, { marginLeft: block.level * 18, marginTop: block.level === 0 ? 8 : 4 }]}
+          {...noHyphenation}
+        >
+          {`${block.label} `}
           {renderInlines(block.inlines)}
         </Text>
       );
@@ -81,8 +85,11 @@ function renderBlock(block: Block, key: number) {
         <View key={key} style={styles.table} wrap={false}>
           <View style={styles.row}>
             <Text style={[styles.cell, styles.labelCell]} />
-            <Text style={[styles.cell, styles.headerCell]}>PARTY 1</Text>
-            <Text style={[styles.cell, styles.headerCell]}>PARTY 2</Text>
+            {block.parties.map((party) => (
+              <Text key={party} style={[styles.cell, styles.headerCell]}>
+                {party.toUpperCase()}
+              </Text>
+            ))}
           </View>
           {block.rows.map((row) => (
             <View key={row.label} style={styles.row}>
@@ -102,9 +109,9 @@ function renderBlock(block: Block, key: number) {
   }
 }
 
-export function NdaPdf({ blocks }: { blocks: Block[] }) {
+export function DocumentPdf({ blocks, title }: { blocks: Block[]; title: string }) {
   return (
-    <Document title="Mutual Non-Disclosure Agreement" creator="prelegal">
+    <Document title={title} creator="prelegal">
       <Page size="LETTER" style={styles.page} wrap>
         {blocks.map(renderBlock)}
       </Page>

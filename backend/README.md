@@ -23,18 +23,32 @@ Requires Python 3.9+.
 | ------ | ---------------- | ----------------------------------------------- |
 | GET    | `/api/health`    | Liveness, including a database round-trip       |
 | GET    | `/api/templates` | Legal templates catalogue (from `catalog.json`) |
-| POST   | `/api/chat`      | One turn of the Mutual NDA drafting chat        |
+| POST   | `/api/chat`      | One turn of the document drafting chat          |
 
-## NDA chat (`app/nda_chat.py`, `app/llm.py`)
+## Drafting chat (`app/drafting_chat.py`, `app/documents.py`, `app/llm.py`)
 
-The request carries the conversation, the current Cover Page fields and the user's local date. The model,
-called through OpenRouter, answers by calling a `respond` tool with `{reply, updates}`. `updates` holds only
-the fields that changed, and Pydantic validates it (types, enums, 1–99 years, ISO dates) before it is
-returned. If the model answers in plain text instead, that text becomes the reply with no updates.
+The supported document types (fields, party roles, Standard Terms template) are declared in the repo-root
+`document-types.json` (`DOCUMENT_TYPES_PATH`) and loaded at startup. The frontend reads the same file.
 
-- Configuration: `OPENROUTER_API_KEY` (required for chat) and `OPENROUTER_MODEL` (default
-  `anthropic/claude-sonnet-5.5`). Both are read from the environment or the repo-root `.env` (see
-  `.env.example`).
+The request carries the conversation, the current draft (`documentId`, `fields`, `party1`, `party2`) and the
+user's local date. The system prompt lists every document type with its fields and hints, so the model can
+pick one, suggest the closest one for an unsupported request, and fill in fields in the same turn. The model
+answers by calling a `respond` tool with `{reply, documentId?, fields, party1?, party2?}`, and the backend
+cleans the answer up before returning it:
+
+- unknown or unchanged `documentId`s are dropped;
+- fields the resulting document doesn't have, and dates not in `YYYY-MM-DD` form, are dropped;
+- numbers are turned into text, and Markdown emphasis is stripped from the reply.
+
+If the model answers in plain text instead, that text becomes the reply with no changes.
+
+- Configuration: `OPENROUTER_API_KEY` (required for chat) and `OPENROUTER_MODEL`, a comma-separated
+  fallback list that OpenRouter tries in order. The default is free models:
+  `nvidia/nemotron-3.5-super-vl:free,nvidia/nemotron-3-ultra-550b-a55b:free,google/gemma-4-31b-it:free`.
+  Set it to e.g. `anthropic/claude-sonnet-5.5` for faster (about 3–6s vs 10–30s per turn), paid answers.
+  Both are read from the environment or the repo-root `.env` (see `.env.example`).
+- Free models are rate-limited by OpenRouter, and free providers may log prompts. Avoid
+  `openrouter/free` as a fallback: it can route to tiny models that don't call the tool.
 - Errors: 503 if no key is configured, 502 if OpenRouter fails or returns an invalid answer, 422 for a
   malformed request.
 - Why the tool isn't forced: current Claude models reject a forced `tool_choice`, and strict structured
@@ -58,8 +72,9 @@ app/
   models.py   SQLAlchemy models
   schemas.py  Pydantic response models
   routes.py   /api routes
-  nda_chat.py NDA chat: request/response models, system prompt, next_turn()
-  llm.py      OpenRouter client
+  documents.py      document-types.json models and loader
+  drafting_chat.py  chat request/response models, system prompt, sanitising, next_turn()
+  llm.py      OpenRouter client (single model or fallback list)
   seed.py     catalog.json -> templates table
 tests/        pytest (each test uses its own temporary database; OpenRouter is mocked)
 ```
