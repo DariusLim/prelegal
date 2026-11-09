@@ -11,8 +11,8 @@ export default function Home() {
       <header className="mb-8">
         <h1 className="text-2xl font-bold tracking-tight text-stone-900">Mutual NDA Creator</h1>
         <p className="mt-1 max-w-2xl text-sm text-stone-600">
-          Fill in the key terms and both parties’ details. The agreement updates as you type and can be downloaded as a
-          PDF. Based on the Common Paper Mutual NDA (Version 1.0).
+          Chat with the assistant about your agreement. It asks about the parties and key terms and fills in the NDA
+          as you answer, ready to download as a PDF. Based on the Common Paper Mutual NDA (Version 1.0).
         </p>
       </header>
       <NdaBuilder standardTerms={standardTerms} />

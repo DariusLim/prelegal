@@ -3,6 +3,8 @@
  * which next.config.ts rewrites to the backend, so no CORS setup is needed.
  */
 
+import type { NdaFormData, NdaUpdates } from "@/lib/nda/types";
+
 export interface Health {
   status: string;
   database: string;
@@ -16,12 +18,32 @@ export interface TemplateSummary {
   filename: string;
 }
 
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatRequest {
+  messages: ChatMessage[];
+  fields: NdaFormData;
+  /** The user's local date (YYYY-MM-DD), for resolving "today" or "next Monday". */
+  today: string;
+}
+
+export interface ChatResponse {
+  reply: string;
+  updates: NdaUpdates;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
+    /** The backend's `detail` message, when it sent one. */
+    readonly detail: string | undefined,
+    method: string,
     path: string,
   ) {
-    super(`GET /api${path} failed with status ${status}`);
+    super(detail ?? `${method} /api${path} failed with status ${status}`);
     this.name = "ApiError";
   }
 }
@@ -31,13 +53,30 @@ export interface RequestOptions {
   signal?: AbortSignal;
 }
 
-async function getJson<T>(path: string, { signal }: RequestOptions = {}): Promise<T> {
-  const response = await fetch(`/api${path}`, { signal, headers: { Accept: "application/json" } });
-  if (!response.ok) throw new ApiError(response.status, path);
+async function errorDetail(response: Response): Promise<string | undefined> {
+  try {
+    const body: unknown = await response.json();
+    const detail = (body as { detail?: unknown }).detail;
+    return typeof detail === "string" ? detail : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function request<T>(method: "GET" | "POST", path: string, body: unknown, { signal }: RequestOptions = {}): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method,
+    signal,
+    headers: { Accept: "application/json", ...(body !== undefined && { "Content-Type": "application/json" }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) throw new ApiError(response.status, await errorDetail(response), method, path);
   return (await response.json()) as T;
 }
 
 export const api = {
-  health: (options?: RequestOptions) => getJson<Health>("/health", options),
-  listTemplates: (options?: RequestOptions) => getJson<TemplateSummary[]>("/templates", options),
+  health: (options?: RequestOptions) => request<Health>("GET", "/health", undefined, options),
+  listTemplates: (options?: RequestOptions) => request<TemplateSummary[]>("GET", "/templates", undefined, options),
+  /** One turn of the NDA drafting chat. */
+  chat: (body: ChatRequest, options?: RequestOptions) => request<ChatResponse>("POST", "/chat", body, options),
 };
