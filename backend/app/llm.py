@@ -2,13 +2,14 @@
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import httpx
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-# A chat turn is short; an explicit cap also stops OpenRouter reserving credit for the model maximum.
-MAX_TOKENS = 2000
+# Room for a chat turn (plus any reasoning tokens); an explicit cap also stops
+# OpenRouter reserving credit for the model maximum.
+MAX_TOKENS = 4000
 
 
 class LLMError(Exception):
@@ -23,12 +24,15 @@ class LLMReply:
 
 
 class OpenRouterClient:
-    def __init__(self, api_key: str, model: str, transport: Optional[httpx.BaseTransport] = None):
-        self.model = model
+    def __init__(self, api_key: str, models: Sequence[str], transport: Optional[httpx.BaseTransport] = None):
+        if not models:
+            raise ValueError("at least one model is required")
+        self.models = list(models)
         self._http = httpx.Client(
             base_url=OPENROUTER_BASE_URL,
             headers={"Authorization": f"Bearer {api_key}", "X-Title": "prelegal"},
-            timeout=httpx.Timeout(60.0, connect=10.0),
+            # Free models can take 20s+ per turn, longer when falling back.
+            timeout=httpx.Timeout(90.0, connect=10.0),
             transport=transport,
         )
 
@@ -50,8 +54,10 @@ class OpenRouterClient:
         this schema. The system prompt asks for the tool instead, and callers
         handle a plain-text answer.
         """
+        # Several models: OpenRouter tries them in order when one errors or is rate-limited.
+        model_choice = {"model": self.models[0]} if len(self.models) == 1 else {"models": self.models}
         payload = {
-            "model": self.model,
+            **model_choice,
             "max_tokens": MAX_TOKENS,
             "messages": [{"role": "system", "content": system}, *messages],
             "tools": [

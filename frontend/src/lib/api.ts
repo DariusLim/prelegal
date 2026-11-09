@@ -3,7 +3,7 @@
  * which next.config.ts rewrites to the backend, so no CORS setup is needed.
  */
 
-import type { NdaFormData, NdaUpdates } from "@/lib/nda/types";
+import type { Draft, DraftChanges } from "@/lib/documents/types";
 
 export interface Health {
   status: string;
@@ -25,14 +25,14 @@ export interface ChatMessage {
 
 export interface ChatRequest {
   messages: ChatMessage[];
-  fields: NdaFormData;
+  draft: Draft;
   /** The user's local date (YYYY-MM-DD), for resolving "today" or "next Monday". */
   today: string;
 }
 
-export interface ChatResponse {
+/** The assistant's reply plus the draft changes it made this turn. */
+export interface ChatResponse extends DraftChanges {
   reply: string;
-  updates: NdaUpdates;
 }
 
 export class ApiError extends Error {
@@ -77,6 +77,6 @@ async function request<T>(method: "GET" | "POST", path: string, body: unknown, {
 export const api = {
   health: (options?: RequestOptions) => request<Health>("GET", "/health", undefined, options),
   listTemplates: (options?: RequestOptions) => request<TemplateSummary[]>("GET", "/templates", undefined, options),
-  /** One turn of the NDA drafting chat. */
+  /** One turn of the drafting chat. */
   chat: (body: ChatRequest, options?: RequestOptions) => request<ChatResponse>("POST", "/chat", body, options),
 };
