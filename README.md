@@ -29,8 +29,8 @@ browser ──▶ frontend (Next.js, :3000) ──/api/*──▶ backend (FastA
                                                                             └─▶ OpenRouter (free models), for /api/chat
 ```
 
-- **Frontend** (`frontend/`): Next.js app, the Legal Document Creator. An AI chat finds out which agreement the user needs, from 11 Common Paper standard documents (NDA, cloud service, SLA, DPA, pilot, partnership and more), fills it in from their answers, and exports it as a PDF. The browser calls the backend same-origin through `/api/*`, which Next.js proxies, so no CORS setup is needed. See [frontend/README.md](frontend/README.md).
-- **Backend** (`backend/`): FastAPI + SQLAlchemy with a temporary SQLite database that is seeded from `catalog.json` on startup. It also runs the drafting chat through OpenRouter (free models by default), so the API key never reaches the browser. See [backend/README.md](backend/README.md).
+- **Frontend** (`frontend/`): Next.js app, the Legal Document Creator. Users sign up or sign in, then see their saved documents. An AI chat finds out which agreement the user needs, from 11 Common Paper standard documents (NDA, cloud service, SLA, DPA, pilot, partnership and more), fills it in from their answers (autosaved to the user's account), and exports it as a PDF. The browser calls the backend same-origin through `/api/*`, which Next.js proxies, so no CORS setup is needed. See [frontend/README.md](frontend/README.md).
+- **Backend** (`backend/`): FastAPI + SQLAlchemy with a SQLite database (Alembic migrations) holding accounts, cookie sessions and saved documents. It also runs the drafting chat through OpenRouter (free models by default) and streams the replies, so the API key never reaches the browser. See [backend/README.md](backend/README.md).
 - **Templates** (`templates/`, `catalog.json`): Common Paper legal templates dataset.
 - **Document types** (`document-types.json`): the documents the assistant can create, with each one's Cover Page fields, party roles and Standard Terms template. Both apps read it, so adding a document is a data change.
 
@@ -40,6 +40,9 @@ browser ──▶ frontend (Next.js, :3000) ──/api/*──▶ backend (FastA
 cd backend && .venv/bin/python -m pytest      # backend
 cd frontend && npm test && npm run test:e2e   # frontend unit + end-to-end
 ```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs all of these, plus lint, type checks and an Alembic
+drift check, on every pull request and push to `main`.
 
 ## Contributing
 

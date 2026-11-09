@@ -1,11 +1,11 @@
-import type { Block, DocumentType, Draft, DraftChanges, Inline, Party, SignatureRow } from "./types";
+import type { Block, DocumentSpec, Draft, DraftChanges, Inline, Party, SignatureRow } from "./types";
 
 const LICENSE_URL = "https://creativecommons.org/licenses/by/4.0/";
 
 const emptyParty = (): Party => ({ name: "", title: "", company: "", noticeAddress: "" });
 
 /** A fresh draft for `doc` (or no document yet), keeping the given parties. */
-export function createDraft(doc: DocumentType | null, parties?: Pick<Draft, "party1" | "party2">): Draft {
+export function createDraft(doc: DocumentSpec | null, parties?: Pick<Draft, "party1" | "party2">): Draft {
   return {
     documentId: doc?.id ?? null,
     fields: Object.fromEntries((doc?.fields ?? []).filter((f) => f.default).map((f) => [f.key, f.default!])),
@@ -19,7 +19,7 @@ export function createDraft(doc: DocumentType | null, parties?: Pick<Draft, "par
  * fields to that document's defaults but keeps both parties; field and party
  * changes are then merged in.
  */
-export function applyChanges(draft: Draft, changes: DraftChanges, library: DocumentType[]): Draft {
+export function applyChanges(draft: Draft, changes: DraftChanges, library: DocumentSpec[]): Draft {
   let next = draft;
   if (changes.documentId && changes.documentId !== draft.documentId) {
     const doc = library.find((d) => d.id === changes.documentId);
@@ -54,7 +54,7 @@ export function formatDate(iso: string): string {
   return date.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
 }
 
-function signatureRows(doc: DocumentType, p1: Party, p2: Party): SignatureRow[] {
+function signatureRows(doc: DocumentSpec, p1: Party, p2: Party): SignatureRow[] {
   const row = (label: string, field: keyof Party, note?: string): SignatureRow => ({
     label,
     note,
@@ -73,9 +73,9 @@ function signatureRows(doc: DocumentType, p1: Party, p2: Party): SignatureRow[] 
 /**
  * Builds the complete document: a Cover Page with the draft's values (blank
  * ones as highlighted placeholders) and signature block, followed by the
- * document's Standard Terms.
+ * document's Standard Terms (`terms`, empty while they load).
  */
-export function buildDocument(doc: DocumentType, draft: Draft): Block[] {
+export function buildDocument(doc: DocumentSpec, draft: Draft, terms: Block[]): Block[] {
   const standardTerms = `the Common Paper ${doc.name} Standard Terms${doc.version ? ` Version ${doc.version}` : ""}`;
   const fieldBlocks = doc.fields.flatMap((field): Block[] => {
     const raw = draft.fields[field.key] ?? "";
@@ -129,13 +129,25 @@ export function buildDocument(doc: DocumentType, draft: Draft): Block[] {
       ],
     },
     { kind: "pageBreak" },
-    ...doc.terms,
+    ...terms,
   ];
 }
 
 /** A filesystem-safe download name, e.g. "CSA-Acme-Inc-Globex.pdf". */
-export function pdfFileName(doc: DocumentType, draft: Draft): string {
+export function pdfFileName(doc: DocumentSpec, draft: Draft): string {
   const slug = (s: string) => s.trim().replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "");
   const parts = [slug(doc.shortName), slug(draft.party1.company), slug(draft.party2.company)].filter(Boolean);
   return `${parts.join("-")}.pdf`;
+}
+
+/**
+ * The name shown in the documents list: the user's title, else the document
+ * and companies (e.g. "CSA: Acme, Inc. & Globex"), else "Untitled document".
+ */
+export function documentTitle(title: string | null, draft: Draft, library: DocumentSpec[]): string {
+  if (title) return title;
+  const doc = library.find((d) => d.id === draft.documentId);
+  if (!doc) return "Untitled document";
+  const companies = [draft.party1.company, draft.party2.company].map((c) => c.trim()).filter(Boolean);
+  return companies.length ? `${doc.shortName}: ${companies.join(" & ")}` : doc.name;
 }

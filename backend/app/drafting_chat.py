@@ -10,37 +10,32 @@ document only ever receives known fields in the expected format.
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import date
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Iterator, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from pydantic.alias_generators import to_camel
+from pydantic import Field, field_validator, model_validator
 
 from app.documents import DocumentLibrary, DocumentType
 from app.llm import LLMError, OpenRouterClient
+from app.schemas import CamelModel
 
 ISO_DATE_OR_EMPTY = re.compile(r"(\d{4}-\d{2}-\d{2})?")
 MAX_VALUE_LENGTH = 5000
 MAX_REPLY_LENGTH = 4000
 
 
-class _CamelModel(BaseModel):
-    """Serialises as camelCase to match the frontend's types."""
-
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
-
-
 # --- Draft state (mirrors frontend/src/lib/documents/types.ts) ---------------
 
 
-class Party(_CamelModel):
+class Party(CamelModel):
     name: str = Field(max_length=500)
     title: str = Field(max_length=500)
     company: str = Field(max_length=500)
     notice_address: str = Field(max_length=500)
 
 
-class Draft(_CamelModel):
+class Draft(CamelModel):
     document_id: Optional[str] = None
     fields: Dict[str, str] = Field(default_factory=dict)
     party1: Party
@@ -57,7 +52,7 @@ class Draft(_CamelModel):
 # --- The model's answer ------------------------------------------------------
 
 
-class PartyUpdate(_CamelModel):
+class PartyUpdate(CamelModel):
     name: Optional[str] = Field(None, max_length=500, description="Full name of the person signing")
     title: Optional[str] = Field(None, max_length=500, description="Signatory's job title")
     company: Optional[str] = Field(None, max_length=500, description="Legal name of the company")
@@ -66,7 +61,7 @@ class PartyUpdate(_CamelModel):
     )
 
 
-class AssistantTurn(_CamelModel):
+class AssistantTurn(CamelModel):
     reply: str = Field(min_length=1, description="Your next chat message to the user, in plain text")
     document_id: Optional[str] = Field(
         None, description="Set only to select or switch the document type: one of the supported document ids"
@@ -94,12 +89,12 @@ class AssistantTurn(_CamelModel):
 # --- API request -------------------------------------------------------------
 
 
-class ChatMessage(_CamelModel):
+class ChatMessage(CamelModel):
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=4000)
 
 
-class ChatRequest(_CamelModel):
+class ChatRequest(CamelModel):
     messages: List[ChatMessage] = Field(min_length=1, max_length=100)
     draft: Draft
     today: date
@@ -110,8 +105,6 @@ class ChatRequest(_CamelModel):
             raise ValueError("the last message must be from the user")
         return self
 
-
-ChatResponse = AssistantTurn
 
 
 # --- Prompt ------------------------------------------------------------------
@@ -228,11 +221,79 @@ def sanitize(turn: AssistantTurn, draft: Draft, library: DocumentLibrary) -> Ass
     return turn.model_copy(update={"reply": _plain_text(turn.reply), "document_id": document_id, "fields": fields})
 
 
-def next_turn(llm: OpenRouterClient, library: DocumentLibrary, request: ChatRequest) -> AssistantTurn:
-    """Asks the model for its next message and document changes.
+def partial_reply(arguments: str) -> Optional[str]:
+    """The top-level "reply" string decoded so far from streamed (possibly incomplete) JSON tool arguments.
 
-    Raises LLMError if the model can't be reached or gives no answer, or
-    pydantic.ValidationError if its tool call doesn't fit AssistantTurn.
+    Returns None until the reply value has started. Stops before an
+    incomplete escape sequence, so the result only ever grows.
+    """
+    depth, i, n = 0, 0, len(arguments)
+    expecting_key, last_key = False, None
+    while i < n:
+        char = arguments[i]
+        if char == '"':
+            j = i + 1
+            while j < n and arguments[j] != '"':
+                j += 2 if arguments[j] == "\\" else 1
+            raw = arguments[i + 1 : min(j, n)]
+            if depth == 1 and not expecting_key and last_key == "reply":
+                return _decode_partial_string(raw)
+            if depth == 1 and expecting_key:
+                last_key = raw
+            i = j + 1
+            continue
+        if char in "{[":
+            depth += 1
+            expecting_key = char == "{" and depth == 1
+        elif char in "}]":
+            depth -= 1
+        elif depth == 1 and char == ",":
+            expecting_key = True
+        elif depth == 1 and char == ":":
+            expecting_key = False
+        i += 1
+    return None
+
+
+def _decode_partial_string(raw: str) -> str:
+    """Decodes a JSON string body, ignoring a trailing incomplete escape (e.g. a lone backslash or \\u12)."""
+    end = i = 0
+    while i < len(raw):
+        if raw[i] == "\\":
+            i += 6 if raw[i + 1 : i + 2] == "u" else 2
+            if i > len(raw):
+                break
+        else:
+            i += 1
+        end = i
+    try:
+        text = json.loads(f'"{raw[:end]}"', strict=False)
+    except ValueError:
+        return ""
+    # Half of a surrogate pair: wait for the other half.
+    if text and "\ud800" <= text[-1] <= "\udbff":
+        text = text[:-1]
+    return text
+
+
+@dataclass(frozen=True)
+class ReplyText:
+    """The reply as streamed so far: append `text`, or replace everything with it when `reset`."""
+
+    text: str
+    reset: bool = False
+
+
+def stream_turn(
+    llm: OpenRouterClient, library: DocumentLibrary, request: ChatRequest
+) -> Iterator[Union[ReplyText, AssistantTurn]]:
+    """Streams the model's next message, then yields the sanitised turn with its document changes.
+
+    The reply is streamed from plain-text content until the model starts its
+    tool call, then from the tool call's `reply` argument. The final turn is
+    authoritative (sanitised, Markdown removed). Raises LLMError if the model
+    can't be reached or gives no answer, or pydantic.ValidationError if its
+    tool call doesn't fit AssistantTurn.
     """
     system = SYSTEM_PROMPT.format(
         catalog=describe_library(library),
@@ -250,18 +311,35 @@ def next_turn(llm: OpenRouterClient, library: DocumentLibrary, request: ChatRequ
     if opening:
         system += "\nYou opened the conversation by saying:\n" + "\n".join(opening) + "\n"
 
-    answer = llm.chat_with_tool(
+    content, arguments, shown = "", "", ""
+    for delta in llm.stream_with_tool(
         system=system,
         messages=[{"role": m.role, "content": m.content} for m in messages],
         tool_name="respond",
         tool_description=TOOL_DESCRIPTION,
         parameters=_tool_schema(library),
-    )
-    if answer.tool_arguments is not None:
-        turn = AssistantTurn.model_validate(answer.tool_arguments)
-    elif answer.text:
+    ):
+        if delta.kind == "content":
+            content += delta.text
+        else:
+            arguments += delta.text
+        text = (partial_reply(arguments) or "") if arguments else content
+        if text.startswith(shown):
+            if len(text) > len(shown):
+                yield ReplyText(text[len(shown) :])
+        else:
+            yield ReplyText(text, reset=True)
+        shown = text
+
+    if arguments:
+        try:
+            parsed = json.loads(arguments)
+        except ValueError as exc:
+            raise LLMError(f"tool arguments aren't valid JSON: {arguments[:500]}") from exc
+        turn = AssistantTurn.model_validate(parsed)
+    elif content.strip():
         # The model skipped the tool: keep the conversation going without changes.
-        turn = AssistantTurn(reply=answer.text)
+        turn = AssistantTurn(reply=content.strip())
     else:
         raise LLMError("model returned neither a tool call nor text")
-    return sanitize(turn, request.draft, library)
+    yield sanitize(turn, request.draft, library)

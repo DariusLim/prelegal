@@ -1,8 +1,9 @@
 /**
  * Shared types for the document creator.
  *
- * `DocumentType`s come from the repo-root document-types.json. The chat edits
- * a `Draft`; `buildDocument` turns the draft into a `Block[]`, a
+ * `DocumentSpec`s come from the repo-root document-types.json; each one's
+ * Standard Terms are loaded separately, on demand. The chat edits a `Draft`;
+ * `buildDocument` turns the draft and the terms into a `Block[]`, a
  * renderer-agnostic document model consumed by both the HTML preview and the
  * PDF renderer, so the two can never drift apart.
  */
@@ -28,11 +29,6 @@ export interface DocumentSpec {
   /** The two signing roles, e.g. ["Provider", "Customer"]. */
   parties: [string, string];
   fields: FieldSpec[];
-}
-
-/** A document type with its Standard Terms parsed (built at build time). */
-export interface DocumentType extends DocumentSpec {
-  terms: Block[];
 }
 
 export interface Party {

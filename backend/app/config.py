@@ -24,11 +24,16 @@ def _default_database_url() -> str:
     return f"sqlite:///{BACKEND_DIR / 'data' / 'prelegal.db'}"
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes")
+
+
 @dataclass(frozen=True)
 class Settings:
-    # SQLite file used as the temporary v1 database. It is disposable: the
-    # schema is created and the catalog re-seeded on every startup.
+    # The schema is migrated (Alembic) and the catalog re-seeded on every startup.
     database_url: str = field(default_factory=lambda: os.environ.get("DATABASE_URL", _default_database_url()))
+    # Mark the session cookie Secure (HTTPS only). Off by default for http://localhost.
+    cookie_secure: bool = field(default_factory=lambda: _env_flag("COOKIE_SECURE"))
     # The templates dataset (catalog.json + templates/) lives at the repo root.
     catalog_path: Path = field(
         default_factory=lambda: Path(os.environ.get("CATALOG_PATH", REPO_ROOT / "catalog.json"))

@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+import { mockBackend, mockChat } from "./mock-backend";
 
 const NOW = new Date("2026-03-15T10:00:00");
 const TODAY_ISO = "2026-03-15";
@@ -14,51 +16,31 @@ const chatAlert = (page: Page) => page.getByRole("region", { name: "Assistant" }
 const signatureRow = (page: Page, label: string) =>
   preview(page).getByRole("row", { name: new RegExp(`^${label}`) });
 
-interface ChatTurn {
-  reply: string;
-  documentId?: string;
-  fields?: Record<string, string>;
-  party1?: Record<string, string>;
-  party2?: Record<string, string>;
-}
-
-/**
- * Answers /api/chat with the given turns in order (the backend and LLM are not
- * involved) and records each request body.
- */
-async function mockChat(page: Page, turns: (ChatTurn | { status: number; detail: string })[]) {
-  const requests: { messages: { role: string; content: string }[]; draft: Record<string, unknown>; today: string }[] = [];
-  await page.route("**/api/chat", async (route: Route) => {
-    requests.push(route.request().postDataJSON());
-    const turn = turns.shift();
-    if (!turn) throw new Error("unexpected chat request");
-    if ("status" in turn) {
-      await route.fulfill({ status: turn.status, json: { detail: turn.detail } });
-    } else {
-      await route.fulfill({ json: { fields: {}, ...turn } });
-    }
-  });
-  return requests;
-}
-
 async function say(page: Page, text: string) {
   await messageBox(page).fill(text);
   await messageBox(page).press("Enter");
 }
 
-test.beforeEach(async ({ page }) => {
-  await page.clock.setFixedTime(NOW);
+let backend: Awaited<ReturnType<typeof mockBackend>>;
+
+async function openNewDocument(page: Page) {
   await page.goto("/");
+  await page.getByRole("button", { name: "New document" }).click();
   // The page is prerendered; the message box is enabled only once hydrated.
   await expect(messageBox(page)).toBeEnabled();
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.clock.setFixedTime(NOW);
+  backend = await mockBackend(page);
+  await openNewDocument(page);
 });
 
 test("opens with the greeting and the list of supported documents, without console errors", async ({ page }) => {
   const errors: string[] = [];
   page.on("console", (msg) => msg.type() === "error" && errors.push(msg.text()));
   page.on("pageerror", (err) => errors.push(err.message));
-  await page.reload();
-  await expect(messageBox(page)).toBeEnabled();
+  await openNewDocument(page);
 
   await expect(conversation(page)).toContainText("What would you like to create?");
   await expect(previewPane(page).getByRole("button")).toHaveCount(11);
@@ -91,7 +73,7 @@ test("picking a document asks the assistant, which selects and fills it in", asy
   await expect(signatureRow(page, "Company")).toContainText("Acme, Inc.");
   await expect(signatureRow(page, "Print Name")).toContainText("[Customer Print Name]");
   // The Standard Terms follow, with nested clause numbering.
-  await expect(preview(page)).toContainText("1.1 Access and Use.");
+  await expect(preview(page)).toContainText("1.1 Access and Use."); // fetched on demand
 
   expect(requests[0].today).toBe(TODAY_ISO);
   expect(requests[0].draft).toMatchObject({ documentId: null, fields: {} });
@@ -192,4 +174,56 @@ test("downloads the completed document as a PDF", async ({ page }) => {
   expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
   expect(pdf.length).toBeGreaterThan(20_000);
   await expect(page.getByText("Couldn’t generate the PDF")).toHaveCount(0);
+});
+
+test("an error after the reply started streaming shows the error and keeps the message", async ({ page }) => {
+  await mockChat(page, [{ streamError: "The AI assistant couldn't respond. Please try again." }]);
+
+  await say(page, "An NDA please");
+
+  await expect(chatAlert(page)).toHaveText("The AI assistant couldn't respond. Please try again.");
+  await expect(messageBox(page)).toHaveValue("An NDA please");
+  await expect(conversation(page)).not.toContainText("Let me");
+});
+
+test("autosaves the document after each turn: created on the first, then updated", async ({ page }) => {
+  await mockChat(page, [
+    { reply: "Mutual NDA selected.", documentId: "mutual-nda", party1: { company: "Acme, Inc." } },
+    { reply: "Delaware it is.", fields: { governingLaw: "Delaware" } },
+  ]);
+  const saveStatus = page.getByRole("status").filter({ hasText: /saved|Saving/i });
+
+  await expect(saveStatus).toHaveText("Not saved yet");
+  await say(page, "An NDA for Acme");
+  await expect(saveStatus).toHaveText("Saved");
+  await expect(page.getByRole("heading", { level: 1, name: "Mutual NDA: Acme, Inc." })).toBeVisible();
+
+  await say(page, "Delaware law");
+  await expect(conversation(page)).toContainText("Delaware it is.");
+  await expect.poll(() => backend.saves.length).toBe(2);
+
+  const [created, updated] = backend.saves;
+  expect(created.method).toBe("POST");
+  expect(created.body).toMatchObject({ draft: { documentId: "mutual-nda", party1: { company: "Acme, Inc." } } });
+  expect(updated).toMatchObject({ method: "PATCH", id: 1, body: { draft: { fields: { governingLaw: "Delaware" } } } });
+  expect((updated.body.messages as unknown[]).length).toBe(5);
+
+  // Back on the list, the document is there.
+  await page.getByRole("button", { name: "← All documents" }).click();
+  await expect(page.getByRole("list", { name: "Documents" })).toContainText("Mutual NDA: Acme, Inc.");
+});
+
+test("a failed save can be retried", async ({ page }) => {
+  await mockChat(page, [{ reply: "Mutual NDA selected.", documentId: "mutual-nda" }]);
+  let failures = 1;
+  await page.route("**/api/documents", async (route) => {
+    if (route.request().method() === "POST" && failures-- > 0) await route.fulfill({ status: 500, body: "" });
+    else await route.fallback();
+  });
+
+  await say(page, "An NDA");
+  await expect(page.getByText("Couldn’t save.")).toBeVisible();
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+  expect(backend.documents).toHaveLength(1);
 });

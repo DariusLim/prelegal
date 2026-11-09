@@ -1,9 +1,9 @@
-import type { DocumentType } from "@/lib/documents/types";
+import type { DocumentSpec } from "@/lib/documents/types";
 
 interface DocumentPickerProps {
-  library: DocumentType[];
+  library: DocumentSpec[];
   disabled: boolean;
-  onPick: (doc: DocumentType) => void;
+  onPick: (doc: DocumentSpec) => void;
 }
 
 /** Shown before a document is chosen: the supported documents, each a shortcut into the chat. */
