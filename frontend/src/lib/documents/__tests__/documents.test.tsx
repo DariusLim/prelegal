@@ -2,13 +2,14 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { describe, expect, it } from "vitest";
 
 import { DocumentPdf } from "@/components/DocumentPdf";
-import { applyChanges, buildDocument, createDraft, formatDate, pdfFileName } from "../buildDocument";
-import { loadLibrary } from "../loadLibrary";
+import { applyChanges, buildDocument, createDraft, documentTitle, formatDate, pdfFileName } from "../buildDocument";
+import { loadDocumentSpecs, loadStandardTerms } from "../loadLibrary";
 import { parseInlines, parseStandardTerms } from "../parseStandardTerms";
-import type { Block, DocumentType, Draft, Inline } from "../types";
+import type { Block, DocumentSpec, Draft, Inline } from "../types";
 
-const library = loadLibrary();
-const byId = (id: string) => library.find((d) => d.id === id) as DocumentType;
+const library = loadDocumentSpecs();
+const byId = (id: string) => library.find((d) => d.id === id) as DocumentSpec;
+const termsOf = (id: string) => loadStandardTerms(byId(id));
 
 const plainText = (inlines: Inline[]) => inlines.map((i) => i.text).join("");
 const allText = (doc: Block[]) =>
@@ -97,15 +98,16 @@ describe("document library", () => {
   it("loads every document type with its Standard Terms parsed cleanly", () => {
     expect(library).toHaveLength(11);
     for (const doc of library) {
-      expect(doc.terms.filter((b) => b.kind === "clause").length, doc.id).toBeGreaterThan(3);
-      const leftovers = allText(doc.terms).match(/.{0,40}(<\/?span|\*\*|\]\().{0,40}/g) ?? [];
+      const terms = loadStandardTerms(doc);
+      expect(terms.filter((b) => b.kind === "clause").length, doc.id).toBeGreaterThan(3);
+      const leftovers = allText(terms).match(/.{0,40}(<\/?span|\*\*|\]\().{0,40}/g) ?? [];
       expect(leftovers, `unparsed markup in ${doc.id}`).toEqual([]);
       expect(new Set(doc.fields.map((f) => f.key)).size, doc.id).toBe(doc.fields.length);
     }
   });
 
   it("keeps the Mutual NDA's 11 top-level clauses", () => {
-    const nda = byId("mutual-nda");
+    const nda = { terms: termsOf("mutual-nda") };
     expect(nda.terms[0]).toEqual({ kind: "title", text: "Standard Terms" });
     const sections = nda.terms.filter((b) => b.kind === "clause" && b.level === 0);
     expect(sections.map((c) => (c.kind === "clause" ? c.label : ""))).toEqual(
@@ -163,7 +165,7 @@ describe("buildDocument", () => {
   };
 
   it("fills in the cover page with the document's fields and party roles", () => {
-    const doc = buildDocument(csa, filled);
+    const doc = buildDocument(csa, filled, termsOf(csa.id));
     const text = allText(doc);
     expect(doc[0]).toEqual({ kind: "title", text: "Cloud Service Agreement" });
     expect(text).toContain("the Common Paper Cloud Service Agreement Standard Terms Version 3.0");
@@ -178,14 +180,14 @@ describe("buildDocument", () => {
   });
 
   it("appends the Standard Terms after a page break", () => {
-    const doc = buildDocument(csa, filled);
+    const doc = buildDocument(csa, filled, termsOf(csa.id));
     const breakAt = doc.findIndex((b) => b.kind === "pageBreak");
-    expect(doc.slice(breakAt + 1)).toEqual(csa.terms);
+    expect(doc.slice(breakAt + 1)).toEqual(termsOf(csa.id));
   });
 
   it("handles documents without a published URL or effective date", () => {
     const addendum = byId("ai-addendum");
-    const text = allText(buildDocument(addendum, createDraft(addendum)));
+    const text = allText(buildDocument(addendum, createDraft(addendum), []));
     expect(text).toContain("the Common Paper AI Addendum Standard Terms (“Standard Terms”), which follow this Cover Page.");
     expect(text).toContain("each party agrees to enter into this AI Addendum.");
     expect(text).toContain("[Training Data]");
@@ -197,12 +199,29 @@ describe("buildDocument", () => {
     expect(pdfFileName(csa, filled)).toBe("CSA-Acme-Inc-Globex.pdf");
     expect(pdfFileName(byId("mutual-nda"), createDraft(null))).toBe("Mutual-NDA.pdf");
   });
+
+  it("ends with the Cover Page while the Standard Terms load", () => {
+    expect(buildDocument(csa, filled, []).at(-1)).toEqual({ kind: "pageBreak" });
+  });
+});
+
+describe("documentTitle", () => {
+  const csa = byId("cloud-service-agreement");
+
+  it("prefers the user's title, then the document and companies", () => {
+    const draft: Draft = { ...createDraft(csa), party1: party("Acme, Inc."), party2: party(" Globex ") };
+    expect(documentTitle("Q3 deal", draft, library)).toBe("Q3 deal");
+    expect(documentTitle(null, draft, library)).toBe("CSA: Acme, Inc. & Globex");
+    expect(documentTitle(null, { ...draft, party2: party("") }, library)).toBe("CSA: Acme, Inc.");
+    expect(documentTitle(null, createDraft(csa), library)).toBe("Cloud Service Agreement");
+    expect(documentTitle(null, createDraft(null), library)).toBe("Untitled document");
+  });
 });
 
 describe("DocumentPdf", () => {
   it("renders a valid multi-page PDF of the longest document", async () => {
     const doc = byId("software-license-agreement");
-    const blocks = buildDocument(doc, createDraft(doc));
+    const blocks = buildDocument(doc, createDraft(doc), loadStandardTerms(doc));
     const buffer = await renderToBuffer(<DocumentPdf blocks={blocks} title={doc.name} />);
     expect(buffer.subarray(0, 5).toString()).toBe("%PDF-");
     expect(buffer.toString("latin1").match(/\/Type \/Page\b/g)?.length).toBeGreaterThanOrEqual(5);

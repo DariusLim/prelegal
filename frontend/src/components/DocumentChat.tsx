@@ -25,6 +25,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 interface DocumentChatProps {
   messages: ChatMessage[];
   sending: boolean;
+  /** The assistant's reply as streamed so far, while `sending`. */
+  streaming: string;
   error: string | null;
   /** False until hydrated; keeps the input disabled. */
   ready: boolean;
@@ -33,7 +35,7 @@ interface DocumentChatProps {
 }
 
 /** The chat panel: conversation log and message input. State lives in useDocumentChat. */
-export function DocumentChat({ messages, sending, error, ready, onSend }: DocumentChatProps) {
+export function DocumentChat({ messages, sending, streaming, error, ready, onSend }: DocumentChatProps) {
   const [draft, setDraft] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -42,7 +44,7 @@ export function DocumentChat({ messages, sending, error, ready, onSend }: Docume
   // Keep the newest message in view.
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
-  }, [messages, sending]);
+  }, [messages, sending, streaming]);
 
   async function send() {
     if (!canSend) return;
@@ -67,13 +69,20 @@ export function DocumentChat({ messages, sending, error, ready, onSend }: Docume
   }
 
   return (
-    <div className="flex h-[70vh] min-h-[28rem] flex-col rounded-lg border border-stone-200 bg-white shadow-sm lg:sticky lg:top-4">
+    <div className="flex h-[60vh] min-h-[24rem] flex-col sm:h-[70vh] sm:min-h-[28rem] rounded-lg border border-stone-200 bg-white shadow-sm lg:sticky lg:top-4">
       <div ref={logRef} role="log" aria-label="Conversation" className="flex-1 space-y-3 overflow-y-auto p-4">
         {messages.map((message, i) => (
           <MessageBubble key={i} message={message} />
         ))}
+        {sending && streaming && (
+          // Hidden from screen readers, which would re-read the log on every streamed piece;
+          // the complete reply is announced once it arrives.
+          <div aria-hidden="true">
+            <MessageBubble message={{ role: "assistant", content: streaming }} />
+          </div>
+        )}
         {sending && (
-          <p role="status" className="text-sm text-stone-500">
+          <p role="status" className={streaming ? "sr-only" : "text-sm text-stone-500"}>
             Assistant is typing…
           </p>
         )}
