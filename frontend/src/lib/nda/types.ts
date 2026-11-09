@@ -28,6 +28,15 @@ export interface NdaFormData {
   party2: Party;
 }
 
+/**
+ * Field changes proposed by the AI assistant: any subset of the fields, with
+ * party details merged individually.
+ */
+export type NdaUpdates = Partial<Omit<NdaFormData, "party1" | "party2">> & {
+  party1?: Partial<Party>;
+  party2?: Partial<Party>;
+};
+
 /** A run of text within a paragraph. */
 export type Inline =
   | { kind: "text"; text: string }

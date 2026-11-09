@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 
 import { DocumentPreview } from "@/components/DocumentPreview";
-import { NdaForm } from "@/components/NdaForm";
+import { NdaChat } from "@/components/NdaChat";
+import { applyUpdates } from "@/lib/nda/applyUpdates";
 import { buildNdaDocument, createDefaultFormData, pdfFileName } from "@/lib/nda/buildDocument";
 import type { Block, NdaFormData } from "@/lib/nda/types";
 import { useToday } from "@/lib/useToday";
@@ -24,7 +25,7 @@ async function downloadPdf(blocks: Block[], fileName: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/** Form + live preview + PDF download for the Mutual NDA. */
+/** AI chat + live preview + PDF download for the Mutual NDA. */
 export function NdaBuilder({ standardTerms }: { standardTerms: Block[] }) {
   const [data, setData] = useState<NdaFormData>(createDefaultFormData);
   const [status, setStatus] = useState<"idle" | "generating" | "error">("idle");
@@ -47,8 +48,8 @@ export function NdaBuilder({ standardTerms }: { standardTerms: Block[] }) {
 
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-      <section aria-label="NDA details">
-        <NdaForm data={data} today={today} onChange={(patch) => setData((d) => ({ ...d, ...patch }))} />
+      <section aria-label="NDA assistant">
+        <NdaChat data={data} today={today} onUpdate={(updates) => setData((d) => applyUpdates(d, updates))} />
       </section>
 
       <section aria-label="NDA preview" className="min-w-0">

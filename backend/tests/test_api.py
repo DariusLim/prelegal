@@ -4,13 +4,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.config import REPO_ROOT, Settings
-from app.main import create_app
-
-
-def make_client(tmp_path: Path, catalog_path: Path = REPO_ROOT / "catalog.json") -> TestClient:
-    settings = Settings(database_url=f"sqlite:///{tmp_path / 'test.db'}", catalog_path=catalog_path)
-    return TestClient(create_app(settings))
+from app.config import REPO_ROOT
+from tests.conftest import make_client
 
 
 @pytest.fixture
