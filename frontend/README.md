@@ -43,3 +43,9 @@ form state (NdaFormData) ─────────────────▶ 
   PDF download. `NdaPdf` (and `@react-pdf/renderer`) are loaded only when the user clicks *Download PDF*.
 
 The app reads `../templates`, so it must be built from within this repository.
+
+## Backend API
+
+`next.config.ts` rewrites `/api/*` to the FastAPI backend (`BACKEND_URL`, default `http://127.0.0.1:8000`).
+`src/lib/api.ts` is the typed client for it. The NDA page doesn't call the backend yet, so the app (and the
+e2e suite) still works without the backend running. Use `scripts/start.sh` at the repo root to run both.
